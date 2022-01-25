@@ -6,6 +6,14 @@ import math
 from wm3m4c_constants import *
 
 
+def translate_measurement_status(measurement_status):
+    return MEASUREMENT_STATUS_MAP[measurement_status]
+
+
+def translate_signature_status(signature_status):
+    return SIGNATURE_STATUS_MAP[signature_status]
+
+
 class WM3M4C:
     def __init__(self, device_id=33):
         self.client = None
@@ -44,20 +52,20 @@ class WM3M4C:
 
     def set_billing_dataset(self, dataset):
         data = json.dumps(dataset).replace(" ", "")
-        data_length = len(data.encode("utf-8"))
+        data_length_bytes = len(data.encode("utf-8"))
+        data_length_registers = math.ceil(data_length_bytes / 2)
         builder = BinaryPayloadBuilder()
         builder.add_string(data)
         payload = builder.to_registers()
-        if len(payload) <= 120:
-            self.client.write_registers(ADDRESS_BILLING_DATASET, payload, unit=self.deviceId)
-        elif len(payload) <= 240:
-            self.client.write_registers(ADDRESS_BILLING_DATASET, payload[:120], unit=self.deviceId)
-            self.client.write_registers(ADDRESS_BILLING_DATASET + 120, payload[120:], unit=self.deviceId)
-        else:
-            print("dataset too long")
-            #TODO: implement with for loop, max len in actualy 1024 bytes
+        # write billing dataset in steps by 120 registers in each step
+        for i in range(0,data_length_registers,MAX_TRANSACTION_REGISTERS):
+            if i + MAX_TRANSACTION_REGISTERS < data_length_registers:
+                self.client.write_registers(ADDRESS_BILLING_DATASET + i, payload[i:i+MAX_TRANSACTION_REGISTERS], unit=self.deviceId)
+            else:
+                self.client.write_registers(ADDRESS_BILLING_DATASET + i, payload[i:], unit=self.deviceId)
+
         # write billing dataset length
-        self.client.write_register(ADDRESS_BILLING_DATASET_LENGTH, data_length, unit=self.deviceId)
+        self.client.write_register(ADDRESS_BILLING_DATASET_LENGTH, data_length_bytes, unit=self.deviceId)
 
     def get_measurement_status(self):
         result = self.client.read_holding_registers(ADDRESS_MEASUREMENT_STATUS, 1, unit=self.deviceId)
@@ -76,14 +84,14 @@ class WM3M4C:
         # measurement can be started only if idle
         if self.get_measurement_status() > 0:
             self.client.write_register(ADDRESS_TRANSACTION_COMMAND, COMMAND_END_MEASUREMENT, unit=self.deviceId)
+        else:
+            raise Exception('Measurement status must not be "Idle"')
 
-    def get_output_billing_dataset(self, format='json'):
-        data_length_register, data_register = None, None
-
-        if format == "json":
+    def get_output_billing_dataset(self, output_format='json'):
+        if output_format == "json":
             data_register = ADDRESS_BILLING_JSON_OUTPUT
             data_length_register = ADDRESS_BILLING_JSON_OUTPUT_LENGTH
-        elif format == "binary":
+        elif output_format == "binary":
             data_register = ADDRESS_BILLING_BINARY_OUTPUT
             data_length_register = ADDRESS_BILLING_BINARY_OUTPUT_LENGTH
         else:
