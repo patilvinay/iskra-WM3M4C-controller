@@ -14,6 +14,25 @@ def translate_signature_status(signature_status):
     return SIGNATURE_STATUS_MAP[signature_status]
 
 
+def build_billing_dataset(FV="1.0", GI="", GS="", PG="", MV="", MM="", MS="", MF="", IS=True, IF=[], IT="NONE", ID="1",
+                          CT="1", CI="", RD=[]):
+    return {"FV": FV,
+            "GI": GI,
+            "GS": GS,
+            "PG": PG,
+            "MV": MV,
+            "MM": MM,
+            "MS": MS,
+            "MF": MF,
+            "IS": IS,
+            "IF": IF,
+            "IT": IT,
+            "ID": ID,
+            "CT": CT,
+            "CI": CI,
+            "RD": RD}
+
+
 class WM3M4C:
     def __init__(self, device_id=33):
         self.client = None
@@ -33,8 +52,8 @@ class WM3M4C:
     def set_time(self, timestamp):
         # write unix timestamp
         ct = hex(round(timestamp))[2:]
-        self.client.write_register(ADDRESS_TIME_HIGH_16, int(ct[:4],16), unit=self.deviceId)
-        self.client.write_register(ADDRESS_TIME_LOW_16, int(ct[4:],16), unit=self.deviceId)
+        self.client.write_register(ADDRESS_TIME_HIGH_16, int(ct[:4], 16), unit=self.deviceId)
+        self.client.write_register(ADDRESS_TIME_LOW_16, int(ct[4:], 16), unit=self.deviceId)
         # set time status to synchronised
         self.client.write_register(ADDRESS_TIME_STATUS, CLOCK_SYNC_SYNCHRONIZED, unit=self.deviceId)
         # set time status timeout to one day (1440 minutes)
@@ -44,9 +63,15 @@ class WM3M4C:
         # set all time representations to local time
         self.client.write_register(ADDRESS_TIME_PRESENTATION, TIME_PRESENTSTION_LOCAL_TIME, unit=self.deviceId)
 
-    def set_signing_profile(self):
-        # set signature format to base64
-        self.client.write_register(ADDRESS_SIGNATURE_FORMAT, SIGNATURE_FORMAT_BASE64, unit=self.deviceId)
+    def set_signing_profile(self, sig_format="hex"):
+        if sig_format == "hex":
+            signature_format = SIGNATURE_FORMAT_HEX
+        elif sig_format == "base64":
+            signature_format = SIGNATURE_FORMAT_BASE64
+        else:
+            raise ValueError("unknow signature format, only hex and base64 are supported")
+        # set signature format
+        self.client.write_register(ADDRESS_SIGNATURE_FORMAT, signature_format, unit=self.deviceId)
         # set signature algorithm to CDSA-secp256r1-SHA256
         self.client.write_register(ADDRESS_SIGNATURE_ALGORITHM, SIGNATURE_ALGORITHM_ECDSA, unit=self.deviceId)
 
@@ -58,9 +83,10 @@ class WM3M4C:
         builder.add_string(data)
         payload = builder.to_registers()
         # write billing dataset in steps by 120 registers in each step
-        for i in range(0,data_length_registers,MAX_TRANSACTION_REGISTERS):
+        for i in range(0, data_length_registers, MAX_TRANSACTION_REGISTERS):
             if i + MAX_TRANSACTION_REGISTERS < data_length_registers:
-                self.client.write_registers(ADDRESS_BILLING_DATASET + i, payload[i:i+MAX_TRANSACTION_REGISTERS], unit=self.deviceId)
+                self.client.write_registers(ADDRESS_BILLING_DATASET + i, payload[i:i + MAX_TRANSACTION_REGISTERS],
+                                            unit=self.deviceId)
             else:
                 self.client.write_registers(ADDRESS_BILLING_DATASET + i, payload[i:], unit=self.deviceId)
 
@@ -102,11 +128,13 @@ class WM3M4C:
         dataset_length_registers = math.ceil(dataset_length_bytes / 2)
         registers = []
 
-        for i in range(0,dataset_length_registers,MAX_TRANSACTION_REGISTERS):
+        for i in range(0, dataset_length_registers, MAX_TRANSACTION_REGISTERS):
             if i + MAX_TRANSACTION_REGISTERS < dataset_length_registers:
-                registers += self.client.read_holding_registers(data_register + i, MAX_TRANSACTION_REGISTERS, unit=self.deviceId).registers
+                registers += self.client.read_holding_registers(data_register + i, MAX_TRANSACTION_REGISTERS,
+                                                                unit=self.deviceId).registers
             else:
-                registers += self.client.read_holding_registers(data_register + i, dataset_length_registers - i, unit=self.deviceId).registers
+                registers += self.client.read_holding_registers(data_register + i, dataset_length_registers - i,
+                                                                unit=self.deviceId).registers
 
             decoder = BinaryPayloadDecoder.fromRegisters(registers)
             return decoder.decode_string(dataset_length_bytes)
@@ -117,16 +145,15 @@ class WM3M4C:
             result = self.client.read_holding_registers(ADDRESS_SIGNATURE_OUTPUT_LENGTH, 1, unit=self.deviceId)
             signature_length_bytes = result.registers[0]
             signature_length_registers = math.ceil(signature_length_bytes / 2)
-            registers = self.client.read_holding_registers(ADDRESS_SIGNATURE_OUTPUT, signature_length_registers, unit=self.deviceId).registers
+            registers = self.client.read_holding_registers(ADDRESS_SIGNATURE_OUTPUT, signature_length_registers,
+                                                           unit=self.deviceId).registers
             decoder = BinaryPayloadDecoder.fromRegisters(registers)
             return decoder.decode_string(signature_length_bytes)
         else:
-            raise Exception('Signature status must be "Signature OK", current status is: "{}"'.format(SIGNATURE_STATUS_MAP[status]))
+            raise Exception(
+                'Signature status must be "Signature OK", current status is: "{}"'.format(SIGNATURE_STATUS_MAP[status]))
 
     def get_public_key(self):
         result = self.client.read_holding_registers(ADDRESS_SIGNATURE_PUBLIC_KEY, 32, unit=self.deviceId)
         decoder = BinaryPayloadDecoder.fromRegisters(result.registers)
         return decoder.decode_string(64)
-
-
-
