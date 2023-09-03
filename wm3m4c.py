@@ -1,6 +1,9 @@
 from pymodbus.client.sync import ModbusSerialClient as ModbusClient
-from pymodbus.payload import BinaryPayloadBuilder
+from pymodbus.client.sync import ModbusTcpClient
 from pymodbus.payload import BinaryPayloadDecoder
+from pymodbus.payload import BinaryPayloadBuilder
+from pymodbus.constants import Endian
+
 import json
 import math
 from wm3m4c_constants import *
@@ -34,19 +37,22 @@ def build_billing_dataset(FV="1.0", GI="", GS="", PG="", MV="", MM="", MS="", MF
 
 
 class WM3M4C:
-    def __init__(self, device_id=33):
+    def __init__(self, device_id=1):
         self.client = None
         self.deviceId = device_id
 
     def connect(self, port, baud=115200):
-        self.client = ModbusClient(
-            method='rtu',
-            port=port,
-            stopbits=1,
-            bytesize=8,
-            parity='N',
-            timeout=1,
-            baudrate=baud)
+        # self.client = ModbusClient(
+        #     method='rtu',
+        #     port=port,
+        #     stopbits=1,
+        #     bytesize=8,
+        #     parity='N',
+        #     timeout=2,
+        #     baudrate=baud)
+
+        self.client = ModbusTcpClient('127.0.0.1', port=5020)
+
         self.client.connect()
 
     def set_time(self, timestamp):
@@ -100,6 +106,8 @@ class WM3M4C:
     def get_signature_status(self):
         result = self.client.read_holding_registers(ADDRESS_SIGNATURE_STATUS_REGISTER, 1, unit=self.deviceId)
         return result.registers[0]
+    
+
 
     def start_measurement(self):
         # measurement can be started only if idle
@@ -129,15 +137,18 @@ class WM3M4C:
         registers = []
 
         for i in range(0, dataset_length_registers, MAX_TRANSACTION_REGISTERS):
-            if i + MAX_TRANSACTION_REGISTERS < dataset_length_registers:
-                registers += self.client.read_holding_registers(data_register + i, MAX_TRANSACTION_REGISTERS,
-                                                                unit=self.deviceId).registers
+        # Calculate the number of registers to read in this transaction
+            num_registers = min(MAX_TRANSACTION_REGISTERS, dataset_length_registers - i)
+            
+            # Read the registers and append them to the list
+            response = self.client.read_holding_registers(data_register + i, num_registers, unit=self.deviceId)
+            if response.isError():
+                print("Modbus error:", response)
             else:
-                registers += self.client.read_holding_registers(data_register + i, dataset_length_registers - i,
-                                                                unit=self.deviceId).registers
+                registers += response.registers
 
-            decoder = BinaryPayloadDecoder.fromRegisters(registers)
-            return decoder.decode_string(dataset_length_bytes)
+        decoder = BinaryPayloadDecoder.fromRegisters(registers)
+        return decoder.decode_string(dataset_length_bytes)
 
     def get_signature(self):
         status = self.get_signature_status()
@@ -154,6 +165,7 @@ class WM3M4C:
                 'Signature status must be "Signature OK", current status is: "{}"'.format(SIGNATURE_STATUS_MAP[status]))
 
     def get_public_key(self):
-        result = self.client.read_holding_registers(ADDRESS_SIGNATURE_PUBLIC_KEY, 32, unit=self.deviceId)
-        decoder = BinaryPayloadDecoder.fromRegisters(result.registers)
-        return decoder.decode_string(64)
+        result = self.client.read_holding_registers(ADDRESS_SIGNATURE_PUBLIC_KEY, 66, unit=self.deviceId)
+        decoder = BinaryPayloadDecoder.fromRegisters(result.registers,wordorder=Endian.Big, byteorder=Endian.Big)
+        str=decoder.decode_string(66)
+        return str
